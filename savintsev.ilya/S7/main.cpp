@@ -1,6 +1,7 @@
 #include <iostream>
 #include <string>
 #include <unordered_map>
+#include <boost/hash2/xxhash.hpp>
 
 int main()
 {

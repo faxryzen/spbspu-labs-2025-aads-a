@@ -1,6 +1,6 @@
 #ifndef QUEUE_HPP
 #define QUEUE_HPP
-#include "dynamic-array.hpp"
+#include <dynamic-array.hpp>
 
 namespace savintsev
 {
