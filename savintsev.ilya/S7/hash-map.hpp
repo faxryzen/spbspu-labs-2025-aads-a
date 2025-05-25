@@ -16,13 +16,15 @@ namespace savintsev
 
     static constexpr size_t MAX_ITERATIONS = 100;
 
-    void insert_data(const Key & k, const T & t);
+    T & insert_data(const Key & k);
     void delete_data(const Key & k);
     bool lookup_data(const Key & k);
+    std::pair< T &, bool> get_data(const Key & k);
   public:
 
     HashMap(size_t size);
 
+    T & operator[](const Key & k);
   };
 
   template< typename Key, typename T, typename HS1, typename HS2, typename EQ >
@@ -38,10 +40,20 @@ namespace savintsev
     }
   }
   template< typename Key, typename T, typename HS1, typename HS2, typename EQ >
-  void HashMap< Key, T, HS1, HS2, EQ >::insert_data(const Key & k, const T & t)
+  T & HashMap< Key, T, HS1, HS2, EQ >::operator[](const Key & k)
+  {
+    auto data = get_data(k);
+    if (data.second)
+    {
+      return data.first;
+    }
+    return insert_data(k);
+  }
+  template< typename Key, typename T, typename HS1, typename HS2, typename EQ >
+  T & HashMap< Key, T, HS1, HS2, EQ >::insert_data(const Key & k)
   {
     Key current_key = k;
-    T current_t = t;
+    T current_t = T{};
 
     for (size_t i = 0; i < MAX_ITERATIONS; ++i)
     {
@@ -49,7 +61,7 @@ namespace savintsev
       if (t1_[h1].second)
       {
         t1_[h1] = {{current_key, current_t}, false};
-        return;
+        return t1_[h1].first.second;
       }
 
       auto displaced = t1_[h1];
@@ -61,7 +73,7 @@ namespace savintsev
       if (t2_[h2].second)
       {
         t2_[h2] = {{current_key, current_t}, false};
-        return;
+        return t2_[h2].first.second;;
       }
 
       displaced = t2_[h2];
@@ -104,6 +116,11 @@ namespace savintsev
   template< typename Key, typename T, typename HS1, typename HS2, typename EQ >
   bool HashMap< Key, T, HS1, HS2, EQ >::lookup_data(const Key & k)
   {
+    return get_data(k).second;
+  }
+  template< typename Key, typename T, typename HS1, typename HS2, typename EQ >
+  std::pair< T &, bool> HashMap< Key, T, HS1, HS2, EQ >::get_data(const Key & k)
+  {
     Key current_key = k;
 
     size_t h1 = HS1{}(current_key) % capacity_;
@@ -112,7 +129,7 @@ namespace savintsev
       Key old_key = t1_[h1].first.first;
       if (!(EQ{}(current_key, old_key) || EQ{}(old_key, current_key)))
       {
-        return true;
+        return {t1_[h1].first.second, true};
       }
     }
 
@@ -122,9 +139,10 @@ namespace savintsev
       Key old_key = t2_[h2].first.first;
       if (!(EQ{}(current_key, old_key) || EQ{}(old_key, current_key)))
       {
-        return true;
+        return {t2_[h2].first.second, true};
       }
     }
+    return {T{}, false};
   }
 }
 
