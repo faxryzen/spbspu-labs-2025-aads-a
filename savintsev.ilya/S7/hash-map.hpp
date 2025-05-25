@@ -16,11 +16,13 @@ namespace savintsev
 
     static constexpr size_t MAX_ITERATIONS = 100;
 
+    void insert_data(const Key & k, const T & t);
+    void delete_data(const Key & k);
+    bool lookup_data(const Key & k);
   public:
 
     HashMap(size_t size);
 
-    void insert_data(const Key & k, const T & t);
   };
 
   template< typename Key, typename T, typename HS1, typename HS2, typename EQ >
@@ -28,7 +30,13 @@ namespace savintsev
     t1_(size),
     t2_(size),
     capacity_(size)
-  {}
+  {
+    for (size_t i = 0; i < capacity_; ++i)
+    {
+      t1_[i].second = true;
+      t2_[i].second = true;
+    }
+  }
   template< typename Key, typename T, typename HS1, typename HS2, typename EQ >
   void HashMap< Key, T, HS1, HS2, EQ >::insert_data(const Key & k, const T & t)
   {
@@ -63,6 +71,60 @@ namespace savintsev
     }
 
     throw std::runtime_error("hashmap: cuckoo failed: iteration limit exceeded");
+  }
+  template< typename Key, typename T, typename HS1, typename HS2, typename EQ >
+  void HashMap< Key, T, HS1, HS2, EQ >::delete_data(const Key & k)
+  {
+    Key current_key = k;
+
+    size_t h1 = HS1{}(current_key) % capacity_;
+    if (!t1_[h1].second)
+    {
+      Key old_key = t1_[h1].first.first;
+      if (!(EQ{}(current_key, old_key) || EQ{}(old_key, current_key)))
+      {
+        t1_[h1].second = true;
+        --size_;
+        return;
+      }
+    }
+
+    size_t h2 = HS2{}(current_key) % capacity_;
+    if (!t2_[h2].second)
+    {
+      Key old_key = t2_[h2].first.first;
+      if (!(EQ{}(current_key, old_key) || EQ{}(old_key, current_key)))
+      {
+        t2_[h2].second = true;
+        --size_;
+        return;
+      }
+    }
+  }
+  template< typename Key, typename T, typename HS1, typename HS2, typename EQ >
+  bool HashMap< Key, T, HS1, HS2, EQ >::lookup_data(const Key & k)
+  {
+    Key current_key = k;
+
+    size_t h1 = HS1{}(current_key) % capacity_;
+    if (!t1_[h1].second)
+    {
+      Key old_key = t1_[h1].first.first;
+      if (!(EQ{}(current_key, old_key) || EQ{}(old_key, current_key)))
+      {
+        return true;
+      }
+    }
+
+    size_t h2 = HS2{}(current_key) % capacity_;
+    if (!t2_[h2].second)
+    {
+      Key old_key = t2_[h2].first.first;
+      if (!(EQ{}(current_key, old_key) || EQ{}(old_key, current_key)))
+      {
+        return true;
+      }
+    }
   }
 }
 
