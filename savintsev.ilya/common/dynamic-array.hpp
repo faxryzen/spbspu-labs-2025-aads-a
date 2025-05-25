@@ -1,5 +1,5 @@
-#ifndef DYNAMIC_ARRAY_H
-#define DYNAMIC_ARRAY_H
+#ifndef DYNAMIC_ARRAY_HPP
+#define DYNAMIC_ARRAY_HPP
 #include <cstddef>
 #include "lrgcpy.hpp"
 
@@ -9,10 +9,15 @@ namespace savintsev
   class Array
   {
   public:
+    ~Array();
     Array(size_t n);
     Array(const Array & rhs);
     Array(Array && rhs) noexcept;
-    ~Array();
+
+    Array & operator=(const Array & rhs);
+    Array & operator=(Array && rhs) noexcept;
+
+    T & operator[](size_t n);
 
     bool empty() const noexcept;
     size_t size() const noexcept;
@@ -83,9 +88,37 @@ namespace savintsev
   {}
 
   template< typename T >
+  Array< T > & Array< T >::operator=(const Array & rhs)
+  {
+    if (this != std::addressof(rhs))
+    {
+      Array temp(rhs);
+      swap(*this, temp);
+    }
+    return *this;
+  }
+
+  template< typename T >
+  Array< T > & Array< T >::operator=(Array && rhs) noexcept
+  {
+    if (this != std::addressof(rhs))
+    {
+      Array temp(std::move(rhs));
+      swap(*this, temp);
+    }
+    return *this;
+  }
+
+  template< typename T >
   Array< T >::~Array()
   {
     delete[] data_;
+  }
+
+  template< typename T >
+  T & Array< T >::operator[](size_t n)
+  {
+    return data_[n + start_];
   }
 
   template< typename T >
