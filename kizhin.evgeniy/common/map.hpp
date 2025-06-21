@@ -6,6 +6,8 @@
 #include <tuple>
 #include <utility>
 #include "internal/map-node.hpp"
+#include "queue.hpp"
+#include "stack.hpp"
 #include "type-utils.hpp"
 
 namespace kizhin {
@@ -27,9 +29,25 @@ namespace kizhin {
     template < bool isConst >
     class Iterator;
 
+    template < bool isConst >
+    class HeavyIterator;
+    template < bool isConst >
+    class LmrIterator;
+    template < bool isConst >
+    class RmlIterator;
+    template < bool isConst >
+    class BfsIterator;
+
   public:
     using iterator = Iterator< false >;
     using const_iterator = Iterator< true >;
+
+    using lmr_iterator = LmrIterator< false >;
+    using const_lmr_iterator = LmrIterator< true >;
+    using rml_iterator = RmlIterator< false >;
+    using const_rml_iterator = RmlIterator< true >;
+    using bfs_iterator = BfsIterator< false >;
+    using const_bfs_iterator = BfsIterator< true >;
 
     class value_compare;
 
@@ -62,6 +80,21 @@ namespace kizhin {
     iterator end() noexcept;
     const_iterator begin() const noexcept;
     const_iterator end() const noexcept;
+
+    lmr_iterator lmrBegin();
+    lmr_iterator lmrEnd();
+    const_lmr_iterator lmrBegin() const;
+    const_lmr_iterator lmrEnd() const;
+
+    rml_iterator rmlBegin();
+    rml_iterator rmlEnd();
+    const_rml_iterator rmlBegin() const;
+    const_rml_iterator rmlEnd() const;
+
+    bfs_iterator bfsBegin();
+    bfs_iterator bfsEnd();
+    const_bfs_iterator bfsBegin() const;
+    const_bfs_iterator bfsEnd() const;
 
     size_type size() const noexcept;
     bool empty() const noexcept;
@@ -108,6 +141,13 @@ namespace kizhin {
 
     std::pair< iterator, iterator > equalRange(const key_type&);
     std::pair< const_iterator, const_iterator > equalRange(const key_type&) const;
+
+    template < typename F >
+    F traverseLmr(F) const;
+    template < typename F >
+    F traverseRml(F) const;
+    template < typename F >
+    F traverseBreadth(F) const;
 
   private:
     using Node = detail::Node< value_type >;
@@ -302,6 +342,275 @@ auto kizhin::Map< K, T, C >::Iterator< IsConst >::operator--(int) -> Iterator
 }
 
 template < typename K, typename T, typename C >
+template < bool IsConst >
+class kizhin::Map< K, T, C >::HeavyIterator
+{
+private:
+  template < typename T1, typename T2 >
+  using conditional_t = std::conditional_t< IsConst, T1, T2 >;
+
+public:
+  using value_type = Map::value_type;
+  using difference_type = std::ptrdiff_t;
+  using pointer = conditional_t< Map::const_pointer, Map::pointer >;
+  using reference = conditional_t< Map::const_reference, Map::reference >;
+  using iterator_category = std::forward_iterator_tag;
+
+  pointer operator->() const noexcept { return std::addressof(**this); }
+  reference operator*() const noexcept
+  {
+    assert(valuePtr_ && "Dereferencing empty HeavyIterator");
+    return *valuePtr_;
+  }
+  operator Map::Iterator< IsConst >() { return { node_, valuePtr_ }; }
+
+  friend bool operator==(const HeavyIterator& lhs, const HeavyIterator& rhs) noexcept
+  {
+    return lhs.node_ == rhs.node_ && lhs.valuePtr_ == rhs.valuePtr_;
+  }
+
+  friend bool operator!=(const HeavyIterator& lhs, const HeavyIterator& rhs) noexcept
+  {
+    return !(lhs == rhs);
+  }
+
+protected:
+  Node* node_ = nullptr;
+  pointer valuePtr_ = nullptr;
+};
+
+template < typename K, typename T, typename C >
+template < bool IsConst >
+class kizhin::Map< K, T, C >::LmrIterator: public HeavyIterator< IsConst >
+{
+public:
+  using pointer = typename HeavyIterator< IsConst >::pointer;
+  using reference = typename HeavyIterator< IsConst >::reference;
+
+  LmrIterator() noexcept = default;
+  template < bool RhsConst, std::enable_if_t< IsConst && !RhsConst, int > = 0 >
+  LmrIterator(const LmrIterator< RhsConst >& rhs):
+    HeavyIterator< IsConst >(rhs),
+    values_(rhs.values_)
+  {}
+  template < bool RhsConst, std::enable_if_t< !IsConst || RhsConst, int > = 0 >
+  LmrIterator(Iterator< RhsConst > rhs):
+    LmrIterator(rhs.node_)
+  {}
+
+  LmrIterator& operator++();
+  LmrIterator operator++(int)
+  {
+    LmrIterator result(*this);
+    ++(*this);
+    return result;
+  }
+
+private:
+  friend class Map;
+
+  Stack< std::pair< Node*, pointer > > values_{};
+  using HeavyIterator< IsConst >::valuePtr_;
+  using HeavyIterator< IsConst >::node_;
+
+  LmrIterator(Node*);
+};
+
+template < typename K, typename T, typename C >
+template < bool IsConst >
+kizhin::Map< K, T, C >::LmrIterator< IsConst >::LmrIterator(Node* root):
+  HeavyIterator< IsConst >()
+{
+  while (root && root->parent) {
+    root = root->parent;
+  }
+  while (root && !detail::isEmpty(root)) {
+    values_.emplace(root, root->begin);
+    root = root->children[0];
+  }
+  ++(*this);
+}
+
+template < typename K, typename T, typename C >
+template < bool IsConst >
+auto kizhin::Map< K, T, C >::LmrIterator< IsConst >::operator++() -> LmrIterator&
+{
+  if (values_.empty()) {
+    valuePtr_ = nullptr;
+    node_ = nullptr;
+    return *this;
+  }
+  node_ = values_.top().first;
+  valuePtr_ = values_.top().second;
+  values_.pop();
+  Node* next = nullptr;
+  if (valuePtr_ == node_->begin && detail::isThree(node_)) {
+    values_.emplace(node_, valuePtr_ + 1);
+    next = node_->children[1];
+  } else {
+    next = node_->children[detail::size(node_)];
+  }
+  while (next && !detail::isEmpty(next)) {
+    values_.emplace(next, next->begin);
+    next = next->children[0];
+  }
+  return *this;
+}
+
+template < typename K, typename T, typename C >
+template < bool IsConst >
+class kizhin::Map< K, T, C >::RmlIterator: public HeavyIterator< IsConst >
+{
+public:
+  using pointer = typename HeavyIterator< IsConst >::pointer;
+  using reference = typename HeavyIterator< IsConst >::reference;
+
+  RmlIterator() noexcept = default;
+  template < bool RhsConst, std::enable_if_t< IsConst && !RhsConst, int > = 0 >
+  RmlIterator(const RmlIterator< RhsConst >& rhs):
+    HeavyIterator< IsConst >(rhs),
+    values_(rhs.values_)
+  {}
+  template < bool RhsConst, std::enable_if_t< !IsConst || RhsConst, int > = 0 >
+  RmlIterator(Iterator< RhsConst > rhs):
+    RmlIterator(rhs.node_)
+  {}
+
+  RmlIterator& operator++();
+  RmlIterator operator++(int)
+  {
+    RmlIterator result(*this);
+    ++(*this);
+    return result;
+  }
+
+private:
+  friend class Map;
+
+  Stack< std::pair< Node*, pointer > > values_{};
+  using HeavyIterator< IsConst >::valuePtr_;
+  using HeavyIterator< IsConst >::node_;
+
+  RmlIterator(Node*);
+};
+
+template < typename K, typename T, typename C >
+template < bool IsConst >
+kizhin::Map< K, T, C >::RmlIterator< IsConst >::RmlIterator(Node* root):
+  HeavyIterator< IsConst >()
+{
+  while (root && root->parent) {
+    root = root->parent;
+  }
+  while (root && !detail::isEmpty(root)) {
+    values_.emplace(root, root->end - 1);
+    root = root->children[detail::size(root)];
+  }
+  ++(*this);
+}
+
+template < typename K, typename T, typename C >
+template < bool IsConst >
+auto kizhin::Map< K, T, C >::RmlIterator< IsConst >::operator++() -> RmlIterator&
+{
+  if (values_.empty()) {
+    valuePtr_ = nullptr;
+    node_ = nullptr;
+    return *this;
+  }
+  node_ = values_.top().first;
+  valuePtr_ = values_.top().second;
+  values_.pop();
+  Node* next = nullptr;
+  if (valuePtr_ != node_->begin) {
+    values_.emplace(node_, valuePtr_ + 1);
+    next = node_->children[valuePtr_ == node_->begin + 1];
+  } else {
+    next = node_->children[0];
+  }
+  while (next && !detail::isEmpty(next)) {
+    values_.emplace(next, next->begin);
+    next = next->children[detail::size(next)];
+  }
+  return *this;
+}
+
+template < typename K, typename T, typename C >
+template < bool IsConst >
+class kizhin::Map< K, T, C >::BfsIterator: public HeavyIterator< IsConst >
+{
+public:
+  using pointer = typename HeavyIterator< IsConst >::pointer;
+  using reference = typename HeavyIterator< IsConst >::reference;
+
+  BfsIterator() noexcept = default;
+  template < bool RhsConst, std::enable_if_t< IsConst && !RhsConst, int > = 0 >
+  BfsIterator(const BfsIterator< RhsConst >& rhs):
+    HeavyIterator< IsConst >(rhs),
+    nodes_(rhs.nodes_)
+  {}
+  template < bool RhsConst, std::enable_if_t< !IsConst || RhsConst, int > = 0 >
+  BfsIterator(Iterator< RhsConst > rhs):
+    BfsIterator(rhs.node_)
+  {}
+
+  BfsIterator& operator++();
+  BfsIterator operator++(int)
+  {
+    BfsIterator result(*this);
+    ++(*this);
+    return result;
+  }
+
+private:
+  friend class Map;
+
+  Queue< Node* > nodes_{};
+  using HeavyIterator< IsConst >::valuePtr_;
+  using HeavyIterator< IsConst >::node_;
+
+  BfsIterator(Node*);
+};
+
+template < typename K, typename T, typename C >
+template < bool IsConst >
+kizhin::Map< K, T, C >::BfsIterator< IsConst >::BfsIterator(Node* root):
+  HeavyIterator< IsConst >()
+{
+  while (root && root->parent) {
+    root = root->parent;
+  }
+  if (root) {
+    nodes_.push(root);
+    ++(*this);
+  }
+}
+
+template < typename K, typename T, typename C >
+template < bool IsConst >
+auto kizhin::Map< K, T, C >::BfsIterator< IsConst >::operator++() -> BfsIterator&
+{
+  if (valuePtr_ && valuePtr_ + 1 != node_->end) {
+    ++valuePtr_;
+    return *this;
+  }
+  if (nodes_.empty()) {
+    valuePtr_ = nullptr;
+    node_ = nullptr;
+    return *this;
+  }
+  node_ = nodes_.front();
+  valuePtr_ = node_->begin;
+  nodes_.pop();
+  for (Node* child: node_->children) {
+    if (child && !detail::isEmpty(child)) {
+      nodes_.push(child);
+    }
+  }
+  return *this;
+}
+
+template < typename K, typename T, typename C >
 class kizhin::Map< K, T, C >::value_compare
 {
 public:
@@ -405,6 +714,81 @@ typename kizhin::Map< K, T, C >::const_iterator kizhin::Map< K, T, C >::end()
     const noexcept
 {
   return const_iterator{ getEndNode() };
+}
+
+template < typename K, typename T, typename C >
+typename kizhin::Map< K, T, C >::lmr_iterator kizhin::Map< K, T, C >::lmrBegin()
+{
+  return lmr_iterator(root_);
+}
+
+template < typename K, typename T, typename C >
+typename kizhin::Map< K, T, C >::lmr_iterator kizhin::Map< K, T, C >::lmrEnd()
+{
+  return lmr_iterator(nullptr);
+}
+
+template < typename K, typename T, typename C >
+typename kizhin::Map< K, T, C >::const_lmr_iterator kizhin::Map< K, T, C >::lmrBegin()
+    const
+{
+  return const_lmr_iterator(root_);
+}
+
+template < typename K, typename T, typename C >
+typename kizhin::Map< K, T, C >::const_lmr_iterator kizhin::Map< K, T, C >::lmrEnd() const
+{
+  return const_lmr_iterator(nullptr);
+}
+
+template < typename K, typename T, typename C >
+typename kizhin::Map< K, T, C >::rml_iterator kizhin::Map< K, T, C >::rmlBegin()
+{
+  return rml_iterator(root_);
+}
+
+template < typename K, typename T, typename C >
+typename kizhin::Map< K, T, C >::rml_iterator kizhin::Map< K, T, C >::rmlEnd()
+{
+  return rml_iterator(nullptr);
+}
+
+template < typename K, typename T, typename C >
+typename kizhin::Map< K, T, C >::const_rml_iterator kizhin::Map< K, T, C >::rmlBegin()
+    const
+{
+  return const_rml_iterator(root_);
+}
+
+template < typename K, typename T, typename C >
+typename kizhin::Map< K, T, C >::const_rml_iterator kizhin::Map< K, T, C >::rmlEnd() const
+{
+  return const_rml_iterator(nullptr);
+}
+
+template < typename K, typename T, typename C >
+typename kizhin::Map< K, T, C >::bfs_iterator kizhin::Map< K, T, C >::bfsBegin()
+{
+  return bfs_iterator(root_);
+}
+
+template < typename K, typename T, typename C >
+typename kizhin::Map< K, T, C >::bfs_iterator kizhin::Map< K, T, C >::bfsEnd()
+{
+  return bfs_iterator(nullptr);
+}
+
+template < typename K, typename T, typename C >
+typename kizhin::Map< K, T, C >::const_bfs_iterator kizhin::Map< K, T, C >::bfsBegin()
+    const
+{
+  return const_bfs_iterator(root_);
+}
+
+template < typename K, typename T, typename C >
+typename kizhin::Map< K, T, C >::const_bfs_iterator kizhin::Map< K, T, C >::bfsEnd() const
+{
+  return const_bfs_iterator(nullptr);
 }
 
 template < typename K, typename T, typename C >
@@ -697,6 +1081,27 @@ auto kizhin::Map< K, T, C >::equalRange(const key_type& key) const
     -> std::pair< const_iterator, const_iterator >
 {
   return std::make_pair(lowerBound(key), upperBound(key));
+}
+
+template < typename K, typename T, typename C >
+template < typename F >
+F kizhin::Map< K, T, C >::traverseLmr(F func) const
+{
+  return std::for_each(lmrBegin(), lmrEnd(), func);
+}
+
+template < typename K, typename T, typename C >
+template < typename F >
+F kizhin::Map< K, T, C >::traverseRml(F func) const
+{
+  return std::for_each(rmlBegin(), rmlEnd(), func);
+}
+
+template < typename K, typename T, typename C >
+template < typename F >
+F kizhin::Map< K, T, C >::traverseBreadth(F func) const
+{
+  return std::for_each(bfsBegin(), bfsEnd(), func);
 }
 
 template < typename K, typename T, typename C >
